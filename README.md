@@ -6,8 +6,8 @@ This C# .NET proxy server is designed to modify page content and change internal
 
 1. Download the code from this repository to your local machine.
 2. Open the project in Visual Studio or another C# .NET development environment.
-3. Replace the targetSite value (now https://habr.com) with the address of the website you want to proxy and modify in the Program.cs file.
-4. Run the application.
+3. Run the application.
+4. Open http://localhost:8080/ 
  
 
 ## How It Works
