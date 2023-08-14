@@ -1,14 +1,15 @@
 using System.Net;
-using System.Text.RegularExpressions;
 using System.Net.Sockets;
+using System.Text.RegularExpressions;
+using HtmlAgilityPack;
 
 namespace ProxyServer
 {
     class Program
     {
-        static async Task Main(string[] args)
+        static async Task Main()
         {
-            const string targetSite = "https://habr.com"; 
+            const string targetSite = "https://habr.com";
             var listener = new TcpListener(IPAddress.Any, 8080);
 
             listener.Start();
@@ -34,14 +35,21 @@ namespace ProxyServer
                     if (parts?.Length >= 3)
                     {
                         var method = parts[0];
-                        var url = parts[1];
+                        var url = parts[1] == "/" ? "/ru" : parts[1];
 
                         if (method == "GET")
                         {
-                            var modifiedContent = await FetchAndModifyContentAsync(targetSite, url);
+                            using var httpClient = new HttpClient();
+                            var response = await httpClient.GetAsync($"{targetSite}{url}");
+
+                            var contentType = response.Content.Headers.ContentType?.MediaType;
+                            var isTextHtml = contentType != null && contentType.Contains("text/html");
+
+                            var modifiedContent = await ModifyContentAsync(response, isTextHtml);
                             await writer.WriteLineAsync("HTTP/1.1 200 OK");
                             await writer.WriteLineAsync($"Content-Length: {modifiedContent.Length}");
                             await writer.WriteLineAsync("Connection: close");
+                            await writer.WriteLineAsync($"Content-type: {contentType}");
                             await writer.WriteLineAsync();
                             await writer.WriteAsync(modifiedContent);
                         }
@@ -52,21 +60,46 @@ namespace ProxyServer
             client.Close();
         }
 
-        static async Task<string> FetchAndModifyContentAsync(string targetSite, string url)
+        static async Task<string> ModifyContentAsync(HttpResponseMessage response, bool isTextHtml)
         {
-            using (var webClient = new WebClient())
+            var content = await response.Content.ReadAsStringAsync();
+
+            if (isTextHtml)
             {
-                var content = await webClient.DownloadStringTaskAsync($"{targetSite}{url}");
+                var doc = new HtmlDocument();
+                doc.LoadHtml(content);
 
-                var modifiedContent = Regex.Replace(content, @"\b\w{6}\b", match =>
+                foreach (var textNode in doc.DocumentNode.DescendantsAndSelf())
                 {
-                    return match.Value + "™";
-                });
+                    if (textNode.NodeType == HtmlNodeType.Text)
+                    {
+                        if (IsInsideScriptTag(textNode)) continue;
 
-                modifiedContent = Regex.Replace(modifiedContent, @"https?://habr\.com", "http://localhost:8080");
+                        var modifiedText = Regex.Replace(textNode.InnerText, @"\b\w{6}\b", match =>
+                        {
+                            return match.Value + "™";
+                        });
 
-                return modifiedContent;
+                        textNode.InnerHtml = modifiedText;
+                    }
+                }
+
+                content = doc.DocumentNode.OuterHtml;
             }
+
+            return content;
+        }
+
+        static bool IsInsideScriptTag(HtmlNode node)
+        {
+            while (node != null)
+            {
+                if (node.Name.Equals("script", StringComparison.OrdinalIgnoreCase)) return true;
+
+                node = node.ParentNode;
+            }
+
+            return false;
         }
     }
 }
